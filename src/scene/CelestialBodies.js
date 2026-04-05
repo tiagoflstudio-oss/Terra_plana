@@ -39,7 +39,7 @@ export class CelestialBodies {
   }
 
   build() {
-    // Build Sun
+    // Build Sun with spotlight
     this.buildSun();
     
     // Build Moon
@@ -47,6 +47,36 @@ export class CelestialBodies {
     
     // Build orbit lines
     this.buildOrbits();
+    
+    // Build directional light for global illumination
+    this.buildSunLight();
+  }
+
+  buildSunLight() {
+    // Spotlight que ilumina a área circular sob o sol
+    this.sunSpotlight = new THREE.SpotLight(0xfff8e0, 1.5);
+    this.sunSpotlight.position.set(0, 0, 0); // Posicionado no sol
+    this.sunSpotlight.angle = Math.PI / 4; // 45 graus - área circular
+    this.sunSpotlight.penumbra = 0.5; // Borda suave
+    this.sunSpotlight.decay = 1.5;
+    this.sunSpotlight.distance = 3500;
+    this.sunSpotlight.castShadow = true;
+    this.sunSpotlight.shadow.mapSize.width = 2048;
+    this.sunSpotlight.shadow.mapSize.height = 2048;
+    this.sunSpotlight.shadow.camera.near = 100;
+    this.sunSpotlight.shadow.camera.far = 3500;
+    
+    // Target onde a luz aponta (centro da Terra)
+    this.sunLightTarget = new THREE.Object3D();
+    this.sunLightTarget.position.set(0, 0, 0);
+    this.group.add(this.sunLightTarget);
+    this.sunSpotlight.target = this.sunLightTarget;
+    
+    this.group.add(this.sunSpotlight);
+    
+    // Luz ambiente suave que varia com a altura do sol
+    this.sunAmbientLight = new THREE.PointLight(0xfff8e0, 0.4, 4000);
+    this.group.add(this.sunAmbientLight);
   }
 
   buildSun() {
@@ -102,10 +132,6 @@ export class CelestialBodies {
     );
     outerGlow.scale.set(600, 600, 1);
     sunGroup.add(outerGlow);
-
-    // Point light from sun
-    this.sunLight = new THREE.PointLight(0xfff8e0, 2.0, 3000);
-    sunGroup.add(this.sunLight);
 
     this.sun = sunGroup;
     this.group.add(sunGroup);
@@ -222,7 +248,7 @@ export class CelestialBodies {
     this.sunPosition.set(sunX, sunY, sunZ);
     
     // Update sun shader
-    if (this.sunCore.material.uniforms) {
+    if (this.sunCore?.material?.uniforms) {
       this.sunCore.material.uniforms.uTime.value = elapsedTime;
     }
     
@@ -231,6 +257,9 @@ export class CelestialBodies {
       const pulse = Math.sin(elapsedTime * 2) * 0.1 + 1;
       this.corona.scale.set(400 * pulse, 400 * pulse, 1);
     }
+    
+    // Update sun spotlight intensity based on altitude
+    this.updateSunLight(sunY);
     
     // Update moon orbit position
     const moonTimeScale = 0.001 * this.moonSpeed;
@@ -256,6 +285,32 @@ export class CelestialBodies {
       }
       if (uniforms.uTime?.value !== undefined) uniforms.uTime.value = elapsedTime;
       if (uniforms.uSunAngle?.value !== undefined) uniforms.uSunAngle.value = elapsedTime * 0.1;
+    }
+  }
+
+  updateSunLight(sunAltitude) {
+    // Calculate intensity based on altitude ratio (0 to 1)
+    const minAlt = this.sunOrbit.minHeight;
+    const maxAlt = this.sunOrbit.maxHeight;
+    const altRatio = (sunAltitude - minAlt) / (maxAlt - minAlt);
+    
+    // Dynamic intensity: lower at horizon, higher at zenith
+    // Base: 0.3 (horizon) to 1.5 (zenith)
+    const baseIntensity = 0.3 + altRatio * 1.2;
+    
+    if (this.sunSpotlight) {
+      this.sunSpotlight.intensity = baseIntensity;
+      this.sunSpotlight.position.set(this.sun.position.x, this.sun.position.y, this.sun.position.z);
+      
+      // Adjust spotlight angle based on altitude - larger area when lower
+      const angle = Math.PI / 6 + altRatio * Math.PI / 6; // 30° to 60°
+      this.sunSpotlight.angle = angle;
+    }
+    
+    if (this.sunAmbientLight) {
+      // Ambient light also varies - stronger at zenith
+      this.sunAmbientLight.intensity = 0.15 + altRatio * 0.35;
+      this.sunAmbientLight.position.set(this.sun.position.x, this.sun.position.y, this.sun.position.z);
     }
   }
 
