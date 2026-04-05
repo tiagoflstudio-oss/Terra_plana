@@ -1,20 +1,24 @@
-import { neon } from '@neondatabase/serverless';
+import { createClient } from '@supabase/supabase-js';
 
-const databaseUrl = import.meta.env.NEON_DATABASE_URL;
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || import.meta.env.SUPABASE_URL;
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || import.meta.env.SUPABASE_ANON_KEY;
 
-export const sql = databaseUrl ? neon(databaseUrl) : null;
+export const supabase = (supabaseUrl && supabaseAnonKey) 
+  ? createClient(supabaseUrl, supabaseAnonKey) 
+  : null;
 
-export const isConfigured = () => !!sql;
+export const isConfigured = () => !!supabase;
 
 export const testConnection = async () => {
-  if (!sql) return { success: false, error: 'Database not configured' };
+  if (!supabase) return { success: false, error: 'Database not configured' };
   
   try {
-    const result = await sql`SELECT 1 as test`;
-    return { success: true, result };
+    const { data, error } = await supabase.from('users').select('id').limit(1);
+    if (error) throw error;
+    return { success: true, result: data };
   } catch (error) {
     return { success: false, error: error.message };
   }
 };
 
-export default sql;
+export default supabase;

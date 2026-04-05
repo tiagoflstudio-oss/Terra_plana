@@ -1,67 +1,4 @@
-import { sql, isConfigured } from './database.js';
-
-export const auth = {
-  register: async (username, email, password) => {
-    if (!isConfigured()) {
-      return { error: 'Banco de dados não configurado' };
-    }
-    
-    try {
-      const passwordHash = await hashPassword(password);
-      const result = await sql`
-        INSERT INTO users (username, email, password_hash)
-        VALUES (${username}, ${email}, ${passwordHash})
-        RETURNING id, username, email
-      `;
-      return { data: result[0] };
-    } catch (error) {
-      return { error: error.message };
-    }
-  },
-  
-  login: async (email, password) => {
-    if (!isConfigured()) {
-      return { error: 'Banco de dados não configurado' };
-    }
-    
-    try {
-      const result = await sql`
-        SELECT id, username, email, avatar_url, bio
-        FROM users
-        WHERE email = ${email}
-      `;
-      
-      if (result.length === 0) {
-        return { error: 'Usuário não encontrado' };
-      }
-      
-      const user = result[0];
-      const valid = await verifyPassword(password, user.password_hash);
-      
-      if (!valid) {
-        return { error: 'Senha incorreta' };
-      }
-      
-      return { data: { id: user.id, username: user.username, email: user.email } };
-    } catch (error) {
-      return { error: error.message };
-    }
-  },
-  
-  getProfile: async (userId) => {
-    if (!isConfigured()) return { error: 'Banco não configurado' };
-    
-    try {
-      const result = await sql`
-        SELECT id, username, email, avatar_url, bio, created_at
-        FROM users WHERE id = ${userId}
-      `;
-      return { data: result[0] || null };
-    } catch (error) {
-      return { error: error.message };
-    }
-  }
-};
+import { supabase, isConfigured } from './database.js';
 
 async function hashPassword(password) {
   const encoder = new TextEncoder();
@@ -76,18 +13,93 @@ async function verifyPassword(password, hash) {
   return inputHash === hash;
 }
 
+export const auth = {
+  register: async (username, email, password) => {
+    if (!isConfigured()) {
+      return { error: 'Banco de dados não configurado. Configure Supabase.' };
+    }
+    
+    try {
+      const passwordHash = await hashPassword(password);
+      const { data, error } = await supabase
+        .from('users')
+        .insert({ username, email, password_hash: passwordHash })
+        .select('id, username, email')
+        .single();
+      
+      if (error) throw error;
+      return { data };
+    } catch (error) {
+      return { error: error.message };
+    }
+  },
+  
+  login: async (email, password) => {
+    if (!isConfigured()) {
+      return { error: 'Banco de dados não configurado. Configure Supabase.' };
+    }
+    
+    try {
+      const { data: users, error } = await supabase
+        .from('users')
+        .select('id, username, email, password_hash, avatar_url, bio')
+        .eq('email', email)
+        .single();
+      
+      if (error || !users) {
+        return { error: 'Usuário não encontrado' };
+      }
+      
+      const valid = await verifyPassword(password, users.password_hash);
+      if (!valid) {
+        return { error: 'Senha incorreta' };
+      }
+      
+      return { data: { id: users.id, username: users.username, email: users.email } };
+    } catch (error) {
+      return { error: error.message };
+    }
+  },
+  
+  getProfile: async (userId) => {
+    if (!isConfigured()) return { error: 'Banco não configurado' };
+    
+    try {
+      const { data, error } = await supabase
+        .from('users')
+        .select('id, username, email, avatar_url, bio, created_at')
+        .eq('id', userId)
+        .single();
+      
+      if (error) throw error;
+      return { data };
+    } catch (error) {
+      return { error: error.message };
+    }
+  }
+};
+
 export const notes = {
   create: async (userId, note) => {
     if (!isConfigured()) return { error: 'Banco não configurado' };
     
     try {
-      const result = await sql`
-        INSERT INTO research_notes (user_id, title, content, category, tags, is_public, camera_position)
-        VALUES (${userId}, ${note.title}, ${note.content}, ${note.category || 'cosmology'}, 
-                ${note.tags || []}, ${note.isPublic || false}, ${JSON.stringify(note.cameraPosition || null)})
-        RETURNING *
-      `;
-      return { data: result[0] };
+      const { data, error } = await supabase
+        .from('research_notes')
+        .insert({
+          user_id: userId,
+          title: note.title,
+          content: note.content,
+          category: note.category || 'cosmology',
+          tags: note.tags || [],
+          is_public: note.isPublic || false,
+          camera_position: note.cameraPosition || null
+        })
+        .select()
+        .single();
+      
+      if (error) throw error;
+      return { data };
     } catch (error) {
       return { error: error.message };
     }
@@ -97,12 +109,14 @@ export const notes = {
     if (!isConfigured()) return { error: 'Banco não configurado' };
     
     try {
-      const result = await sql`
-        SELECT * FROM research_notes 
-        WHERE user_id = ${userId}
-        ORDER BY created_at DESC
-      `;
-      return { data: result };
+      const { data, error } = await supabase
+        .from('research_notes')
+        .select('*')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false });
+      
+      if (error) throw error;
+      return { data: data || [] };
     } catch (error) {
       return { error: error.message };
     }
@@ -112,15 +126,15 @@ export const notes = {
     if (!isConfigured()) return { error: 'Banco não configurado' };
     
     try {
-      const result = await sql`
-        SELECT rn.*, u.username, u.avatar_url
-        FROM research_notes rn
-        JOIN users u ON rn.user_id = u.id
-        WHERE rn.is_public = true
-        ORDER BY rn.created_at DESC
-        LIMIT ${limit}
-      `;
-      return { data: result };
+      const { data, error } = await supabase
+        .from('research_notes')
+        .select('*, users(username, avatar_url)')
+        .eq('is_public', true)
+        .order('created_at', { ascending: false })
+        .limit(limit);
+      
+      if (error) throw error;
+      return { data: data || [] };
     } catch (error) {
       return { error: error.message };
     }
@@ -130,22 +144,21 @@ export const notes = {
     if (!isConfigured()) return { error: 'Banco não configurado' };
     
     try {
-      const fields = [];
-      const values = [];
+      const { data, error } = await supabase
+        .from('research_notes')
+        .update({
+          title: updates.title,
+          content: updates.content,
+          category: updates.category,
+          tags: updates.tags
+        })
+        .eq('id', noteId)
+        .eq('user_id', userId)
+        .select()
+        .single();
       
-      if (updates.title) { fields.push('title = $1'); values.push(updates.title); }
-      if (updates.content) { fields.push('content = $2'); values.push(updates.content); }
-      if (updates.category) { fields.push('category = $3'); values.push(updates.category); }
-      if (updates.tags) { fields.push('tags = $4'); values.push(updates.tags); }
-      
-      values.push(noteId, userId);
-      
-      const result = await sql`
-        UPDATE research_notes SET ${sql(fields.join(', '))}
-        WHERE id = ${noteId} AND user_id = ${userId}
-        RETURNING *
-      `;
-      return { data: result[0] };
+      if (error) throw error;
+      return { data };
     } catch (error) {
       return { error: error.message };
     }
@@ -155,9 +168,13 @@ export const notes = {
     if (!isConfigured()) return { error: 'Banco não configurado' };
     
     try {
-      await sql`
-        DELETE FROM research_notes WHERE id = ${noteId} AND user_id = ${userId}
-      `;
+      const { error } = await supabase
+        .from('research_notes')
+        .delete()
+        .eq('id', noteId)
+        .eq('user_id', userId);
+      
+      if (error) throw error;
       return { success: true };
     } catch (error) {
       return { error: error.message };
@@ -170,13 +187,22 @@ export const theories = {
     if (!isConfigured()) return { error: 'Banco não configurado' };
     
     try {
-      const result = await sql`
-        INSERT INTO theories (user_id, title, description, evidence, category, is_public, camera_position)
-        VALUES (${userId}, ${theory.title}, ${theory.description}, ${JSON.stringify(theory.evidence || [])},
-                ${theory.category || 'cosmology'}, ${theory.isPublic || false}, ${JSON.stringify(theory.cameraPosition || null)})
-        RETURNING *
-      `;
-      return { data: result[0] };
+      const { data, error } = await supabase
+        .from('theories')
+        .insert({
+          user_id: userId,
+          title: theory.title,
+          description: theory.description,
+          evidence: theory.evidence || [],
+          category: theory.category || 'cosmology',
+          is_public: theory.isPublic || false,
+          camera_position: theory.cameraPosition || null
+        })
+        .select()
+        .single();
+      
+      if (error) throw error;
+      return { data };
     } catch (error) {
       return { error: error.message };
     }
@@ -186,10 +212,14 @@ export const theories = {
     if (!isConfigured()) return { error: 'Banco não configurado' };
     
     try {
-      const result = await sql`
-        SELECT * FROM theories WHERE user_id = ${userId} ORDER BY created_at DESC
-      `;
-      return { data: result };
+      const { data, error } = await supabase
+        .from('theories')
+        .select('*')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false });
+      
+      if (error) throw error;
+      return { data: data || [] };
     } catch (error) {
       return { error: error.message };
     }
@@ -199,15 +229,15 @@ export const theories = {
     if (!isConfigured()) return { error: 'Banco não configurado' };
     
     try {
-      const result = await sql`
-        SELECT t.*, u.username, u.avatar_url
-        FROM theories t
-        JOIN users u ON t.user_id = u.id
-        WHERE t.is_public = true
-        ORDER BY t.created_at DESC
-        LIMIT ${limit}
-      `;
-      return { data: result };
+      const { data, error } = await supabase
+        .from('theories')
+        .select('*, users(username, avatar_url)')
+        .eq('is_public', true)
+        .order('created_at', { ascending: false })
+        .limit(limit);
+      
+      if (error) throw error;
+      return { data: data || [] };
     } catch (error) {
       return { error: error.message };
     }
@@ -217,18 +247,37 @@ export const theories = {
     if (!isConfigured()) return { error: 'Banco não configurado' };
     
     try {
-      await sql`
-        INSERT INTO theory_votes (theory_id, user_id, vote_type)
-        VALUES (${theoryId}, ${userId}, ${voteType})
-        ON CONFLICT (theory_id, user_id) DO UPDATE SET vote_type = ${voteType}
-      `;
+      const { error: upsertError } = await supabase
+        .from('theory_votes')
+        .upsert({
+          theory_id: theoryId,
+          user_id: userId,
+          vote_type: voteType
+        }, {
+          onConflict: 'theory_id,user_id'
+        });
       
-      await sql`
-        UPDATE theories t SET 
-          upvotes = (SELECT COUNT(*) FROM theory_votes WHERE theory_id = ${theoryId} AND vote_type = 'upvote'),
-          downvotes = (SELECT COUNT(*) FROM theory_votes WHERE theory_id = ${theoryId} AND vote_type = 'downvote')
-        WHERE t.id = ${theoryId}
-      `;
+      if (upsertError) throw upsertError;
+      
+      const { data: upvotes } = await supabase
+        .from('theory_votes')
+        .select('id', { count: 'exact' })
+        .eq('theory_id', theoryId)
+        .eq('vote_type', 'upvote');
+      
+      const { data: downvotes } = await supabase
+        .from('theory_votes')
+        .select('id', { count: 'exact' })
+        .eq('theory_id', theoryId)
+        .eq('vote_type', 'downvote');
+      
+      await supabase
+        .from('theories')
+        .update({ 
+          upvotes: upvotes?.length || 0,
+          downvotes: downvotes?.length || 0
+        })
+        .eq('id', theoryId);
       
       return { success: true };
     } catch (error) {
@@ -242,13 +291,20 @@ export const bookmarks = {
     if (!isConfigured()) return { error: 'Banco não configurado' };
     
     try {
-      const result = await sql`
-        INSERT INTO bookmarks (user_id, name, camera_position, camera_target, scene_state)
-        VALUES (${userId}, ${bookmark.name}, ${JSON.stringify(bookmark.position)},
-                ${JSON.stringify(bookmark.target || null)}, ${JSON.stringify(bookmark.sceneState || {})})
-        RETURNING *
-      `;
-      return { data: result[0] };
+      const { data, error } = await supabase
+        .from('bookmarks')
+        .insert({
+          user_id: userId,
+          name: bookmark.name,
+          camera_position: bookmark.position,
+          camera_target: bookmark.target || null,
+          scene_state: bookmark.sceneState || {}
+        })
+        .select()
+        .single();
+      
+      if (error) throw error;
+      return { data };
     } catch (error) {
       return { error: error.message };
     }
@@ -258,10 +314,14 @@ export const bookmarks = {
     if (!isConfigured()) return { error: 'Banco não configurado' };
     
     try {
-      const result = await sql`
-        SELECT * FROM bookmarks WHERE user_id = ${userId} ORDER BY created_at DESC
-      `;
-      return { data: result };
+      const { data, error } = await supabase
+        .from('bookmarks')
+        .select('*')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false });
+      
+      if (error) throw error;
+      return { data: data || [] };
     } catch (error) {
       return { error: error.message };
     }
@@ -271,7 +331,13 @@ export const bookmarks = {
     if (!isConfigured()) return { error: 'Banco não configurado' };
     
     try {
-      await sql`DELETE FROM bookmarks WHERE id = ${bookmarkId} AND user_id = ${userId}`;
+      const { error } = await supabase
+        .from('bookmarks')
+        .delete()
+        .eq('id', bookmarkId)
+        .eq('user_id', userId);
+      
+      if (error) throw error;
       return { success: true };
     } catch (error) {
       return { error: error.message };
